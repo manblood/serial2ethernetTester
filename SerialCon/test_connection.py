@@ -6,12 +6,10 @@ Created on 10 Eyl 2016
 
 import socket
 import threading
-from multiprocessing import Queue, Process
+from multiprocessing import Queue
 import time
-import serial
+import serial.tools.list_ports
 import logging
-import datetime
-from _collections import defaultdict
 import traceback
 
 
@@ -29,8 +27,7 @@ class message(object):
                 data = data.rstrip('>')
 #                 print("stripped: "+data)
                 data = data.split("|")
-                dt = datetime.datetime.now()
-                self.time = dt.microsecond
+                self.time = int(time.time() * 1000)
                 self.messageNo = int(data[0])
                 self.body = data[1]
                 #message.mes_list
@@ -41,8 +38,7 @@ class message(object):
         else:
             self.messageNo = messageNo
             self.messageBody = messageBody
-            dt = datetime.datetime.now()
-            self.time = dt.microsecond
+            self.time = int(time.time() * 1000)
             
         #message.mes_index[self.messageNo] = self
     
@@ -65,6 +61,7 @@ class tester(object):
         print("create test connection")
         
         #logger = logging()
+        logging.basicConfig(format='%(asctime)s %(levelname)s: %(message)s', datefmt='%d.%m.%Y %H:%M:%S ', filename='s2e.log',level=logging.DEBUG)
         
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.data = "1234567890"
@@ -155,7 +152,7 @@ class tester(object):
         messageNo = 0
         while True:
             
-            sent = self.sock.send(bytes("<" + str(messageNo) +"|" + self.data + ">"))
+            sent = self.sock.send(bytes("<" + str(messageNo) +"|" + self.data + ">",'UTF-8'))
             if sent > 0:
                 print("Socket send mes no: " + str(messageNo))
                 #self.socketSendQueue.put(messageNo)
@@ -170,11 +167,11 @@ class tester(object):
         messageNo = 0
         while True:
             
-            dataToSend = bytes("<" + str(messageNo) +"|" + self.data + ">\r\n")
-            print("Serial Send: " + dataToSend + "#")
+            dataToSend = bytes("<" + str(messageNo) +"|" + self.data + ">\r\n",'UTF-8')
+            print("Serial Send: " + str(dataToSend) + "#")
             #self.com.write(dataToSend)
             mes = message(messageNo=messageNo, messageBody=self.data)
-            self.com.write(bytes(dataToSend))
+            self.com.write(dataToSend)
             self.serialSendList[messageNo] = mes
             #print("in send list: " + self.serialSendList[messageNo].messageBody)
             messageNo = messageNo + 1
@@ -188,13 +185,15 @@ class tester(object):
             recCount = self.com.inWaiting()
             if recCount > 0:
                 rec = self.com.read(recCount)
-                print("Serial receive: " + rec.decode("UTF-8"))
+                receivedSTR = rec.decode("UTF-8")
+                print("Serial receive: " + receivedSTR)
+                self.serialReceiveQueue.put(receivedSTR)
+                
             pass
         
         
     
     def testHandlerThread(self):
-        
         while True: 
 #             if not self.socketSendQueue.empty():
 #                 item = self.socketSendQueue.get()
@@ -214,20 +213,44 @@ class tester(object):
                     receivedMes = message(data=receivedSTR) 
 #                     print("received Message No: " + str(receivedMes.messageNo))
                     if self.serialSendList[receivedMes.messageNo].messageBody == self.data:
-                        print("Received Message: " + str(receivedMes.messageNo))
+                        print("Socket Received Message: " + str(receivedMes.messageNo))
                         del self.serialSendList[receivedMes.messageNo]
                     else:
-                        #log it!
                         print("something wrong")
+                        logging.warning("Socket Receive missing message: " + receivedSTR)
                 except Exception as e:
                     print("bad data has arrived")
                     print(traceback.format_exc())
-                    #log it!1
+                    logging.warning("Bad Socket data arrived: " + receivedSTR)
 
                     
             if not self.serialReceiveQueue.empty():
-                pass
-               
+                receivedSerialSTR = self.serialReceiveQueue.get()
+                try:
+                    recMes = message(data = receivedSerialSTR)
+                    if self.socketSendList[recMes.messageNo].messageBody == self.data:
+                        print("Serial Rec: " + str(recMes.messageNo))
+                        del self.socketSendList[recMes.messageNo]
+                    else:
+                        print("something wrong")
+                        logging.warning("msg")
+                except:
+                    print("Serial Bad Data")
+                    print(traceback.format_exc())
+                    logging.warning("Bad Serial Data Arrived: " + receivedSerialSTR)
+            
+            for mesno, mes in self.serialSendList.items():
+                #print("mestime : " + str(mes.time))
+                if int(time.time() * 1000) - mes.time > 1000:
+                    print("Serial Data ERROR")
+                    logging.error("Serial: " + str(mesno))
+                    del self.serialSendList[mesno]
+            
+            for mesno, mes in self.socketSendList.items():
+                if int(time.time() * 1000) - mes.time > 1000:
+                    print("Socket data ERROR")
+                    logging.error("Socket: " + str(mesno))
+                    del self.socketSendList[mesno]
                 #items.append(item)
             
             
@@ -241,3 +264,14 @@ class tester(object):
         
     def openComport(self):
         pass
+    
+    
+    
+ports = list(serial.tools.list_ports.comports())
+for p in ports:
+    print(p)
+
+print("----------------------------------------------------")
+
+
+test = tester()
